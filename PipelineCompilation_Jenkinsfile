@@ -1,0 +1,90 @@
+import groovy.json.JsonOutput
+pipeline {
+    agent any
+
+environment{
+	    props=load "/home/sivasankar88723/jenkins_cred/customenv.properties";
+        returnObj=''
+
+	}
+parameters { 
+    string(name: 'jobId', defaultValue: '', description: '')
+    string(name: 'fileName', defaultValue: '', description: '')
+    string(name: 'gcsPath', defaultValue: '', description: '')
+    }
+    
+   
+stages {
+     stage('Loading Environment Variables') {
+            steps {
+                
+                script {
+               
+                   try{
+                   env.DEV_PROJECTID="$DEV_PROJECTID"
+                   env.BUCKETNAME="$DEV_BUCKETNAME"
+                  }catch(err){
+                      echo "$err"
+                      returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":"Loading Environment Variables","status":"FAILURE"}'
+                      throw err
+                 }
+                }
+            }
+        }
+stage('Download from GCS pipeline python script') {
+            steps{
+                script{
+                    try{
+                step([$class: 'DownloadStep', 
+			credentialsId:env.DEV_PROJECTID,  bucketUri: "gs://${BUCKETNAME}/${gcsPath}/${fileName}",
+                      localDirectory: "/var/lib/jenkins/workspace/"])
+
+                      }catch(err){
+                      echo "$err"
+                      returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":"Download from GCS pipeline python script","status":"FAILURE"}'
+                      throw err
+                 }
+                }
+            }
+        }
+ stage('Pipeline Compilation script'){
+            steps{
+                 script{
+                    try{
+                  sh '''
+                      cd /var/lib/jenkins/workspace/${gcsPath}
+                      python3.7 ${fileName}
+                      gsutil cp ${fileName}.tar.gz gs://${BUCKETNAME}/${gcsPath}/
+                      
+                   '''
+                   
+                    }catch(err){
+                      echo "$err"
+                      returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":"Pipeline Compilation Script","status":"FAILURE"}'
+                      throw err
+                 }
+                 }
+                   }
+        }
+     }
+     post {
+success {
+script {
+ returnObj='{"jobId":'+params.jobId+',"errMessage":"No Error" ,"stageName":"ALL","status":"SUCCESS"}'
+echo JsonOutput.toJson(returnObj)
+echo returnObj
+}
+}
+failure {
+script {
+echo JsonOutput.toJson(returnObj)
+echo returnObj
+
+}
+}
+}     
+  }
+
+
+
+

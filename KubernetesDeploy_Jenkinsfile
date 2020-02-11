@@ -1,0 +1,142 @@
+import groovy.json.JsonOutput
+pipeline {
+    agent any
+     environment{
+        props=load "/home/sivasankar88723/jenkins_cred/customenv.properties";
+		returnObj=''
+        
+	}
+    parameters{
+              string(name: 'jobId', defaultValue: '', description: '')
+              string(name: 'MODEL_PATH', defaultValue: '', description: '')
+              string(name: 'NAME', defaultValue: '', description: '')
+              string(name: 'DEPLOY_ENV', defaultValue: '', description: '')
+              }
+   
+    stages{
+        stage('Loading Environment Variables') {
+            steps {
+                
+                script {
+                 try{
+                   env.STAGE_PROJECTID = "${STAGE_PROJECTID}"
+                   env.DEV_PROJECTID="$DEV_PROJECTID"
+                   env.GCS_PATH="$KUBE_GCS_PATH"
+                   env.STAGE_MODEL_URL="$STAGE_KUBE_MODEL_URL"
+                   env.DEV_MODEL_URL="$DEV_KUBE_MODEL_URL"
+                   env.DEPLOY_SCRIPT_PATH="$DEV_KUBE_DEPLOY_SCRIPTPATH"
+                   env.REPO_NAME="$REPO_NAME"
+                   env.STAGE_BUCKETNAME="$STAGE_BUCKETNAME"
+                   env.CONTAINER_PORT="$CONTAINER_PORT"
+                   env.SERVICE_PORT="$SERVICE_PORT"
+                   env.SERVICE_TYPE="$SERVICE_TYPE"
+                 }catch(err){
+                      echo "$err"
+                      returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":"Loading Environment Variables","status":"FAILURE"}'
+                      throw err
+                 }
+                    
+                }
+            }
+        }
+        
+          stage('Replacing dynamic values into template'){
+                          steps{
+                              script{
+                                  try{
+                                   if(params.DEPLOY_ENV == 'Staging'){
+                                       arr=params.MODEL_PATH.split('/')
+                                    
+                                        len=arr.size()-1
+                                        fileName=arr[len]
+                                        env.MODEL_PATH_URL=env.STAGE_MODEL_URL+'/'+fileName 
+                                        env.fileName=fileName
+                                        echo fileName
+                                        echo MODEL_PATH_URL
+                                        IMAGE_PATH=env.REPO_NAME+'/'+env.STAGE_PROJECTID+'/serve:v2'
+                                        echo IMAGE_PATH
+
+                                        env.IMAGE_PATH = IMAGE_PATH
+                                        echo env.IMAGE_PATH
+                                        echo env.MODEL_PATH_URL
+					env.KCONFIG='StageEnv'
+					echo env.KCONFIG
+                                   
+                                   }else{
+                                       echo "invalid Deployment Environment"
+                                       errmessage="invalid Deployment Environment"
+                                   }
+                                    
+                                   
+                                if(errmessage == "invalid Deployment Environment"){
+                                  echo errmessage
+                                  err=errmessage
+                                   returnObj='{"jobId":'+params.jobId+',errMessage":'+errmessage+',"stageName":" Replacing dynamic values into template","status":"FAILURE"}'
+                                   throw new Exception(err)
+                                    
+                                }else{
+                              
+                                sh'''
+                                    gsutil cp $DEPLOY_SCRIPT_PATH .
+                                    cat "deploy.yml.template" | sed "s@IMAGE_PATH@${IMAGE_PATH}@g" | sed "s@CONTAINER_PORT@$CONTAINER_PORT@g" | sed "s@SERVICE_PORT@$SERVICE_PORT@g" | sed "s@SERVICE_TYPE@$SERVICE_TYPE@g" | sed "s@NAME@$NAME@g" | sed "s@MODEL_PATH@$MODEL_PATH_URL@g" > deploy.yaml
+                                    if [ "$DEPLOY_ENV" = "Staging" ];then
+                                        wget  $MODEL_PATH
+                                        echo $fileName
+                                        gsutil cp $fileName gs://${STAGE_BUCKETNAME}/${GCS_PATH}/    
+                                    else
+                                              echo "invalid Deployment Environment"
+                                    fi
+                                    cat deploy.yaml
+                                '''
+                                }
+                                 }
+                              catch(err){
+                                   echo "$err"
+                                   returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":" Replacing dynamic values into template","status":"FAILURE"}'
+                                   throw err
+                                 
+                              }
+                              }
+                              }
+                        }
+          stage('Deploy to Kubernetes'){
+                          steps{
+                               script{
+                                   try{
+                               
+                                kubernetesDeploy configs: 'deploy.yaml', kubeConfig: [path: ''], 
+                                kubeconfigId: env.KCONFIG, secretName: 'regcred', ssh: [sshCredentialsId: '*', sshServer: ''], 
+                                textCredentials: [certificateAuthorityData: '', clientCertificateData: '', clientKeyData: '', serverUrl: 'https://']
+                               
+                                }
+                               catch(err){
+                                   echo "$err"
+                                   returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":" Replacing dynamic values into template","status":"FAILURE"}'
+                                   throw err
+                                   
+                               }}
+                                }
+                            }
+                       }
+                   post {
+success {
+script {
+ returnObj='{"jobId":'+params.jobId+',"errMessage":"No Error" ,"stageName":"ALL","status":"SUCCESS"}'
+echo JsonOutput.toJson(returnObj)
+echo returnObj
+}
+}
+failure {
+script {
+echo JsonOutput.toJson(returnObj)
+echo returnObj
+
+}
+}
+}     
+                       
+            }
+
+              
+
+

@@ -1,0 +1,117 @@
+import groovy.json.JsonOutput
+pipeline {
+    agent any
+    parameters{
+              string(name: 'jobId', defaultValue: '', description: '')
+              string(name: 'MODEL_FILE_NAME', defaultValue: '', description: '')
+              string(name: 'MODEL_TYPE', defaultValue: '', description: '')
+              string(name: 'MODEL_NAME', defaultValue: '', description: '')
+              string(name: 'DEPLOY_ENV', defaultValue: '', description: '')
+              }
+              environment{
+                  props=load "/home/sivasankar88723/jenkins_cred/customenv.properties";
+                  returnObj=''
+              }
+   
+   stages{
+        stage('Loading Environment Variables') {
+            steps {
+                
+                script {
+                  try{
+                   env.STAGE_PROJECTID = "${STAGE_PROJECTID}"
+                   env.DEV_PROJECTID="$DEV_PROJECTID"
+                   env.GCS_PATH="$GCS_PATH"
+                   env.STAGE_MODEL_URL="$STAGE_MODEL_URL"
+                   env.DEV_MODEL_URL="$DEV_MODEL_URL"
+                   env.DEPLOY_SCRIPT_PATH="$DEPLOY_SCRIPT_PATH"
+                   env.REPO_NAME="$REPO_NAME"
+                  }catch(err){
+                      echo "$err"
+                      returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":"Loading Environment Variables","status":"FAILURE"}'
+                      throw err
+                  }
+                    
+                }
+            }
+        }
+          stage('Seldon Deployment'){
+                                steps{
+                                    script{
+                                        try{
+                                         if(params.DEPLOY_ENV == 'Staging'){
+                                            env.MODEL_PATH_URL=env.STAGE_MODEL_URL+'/'+params.MODEL_FILE_NAME 
+                                            env.DEV_MODEL_PATH_URL=env.DEV_MODEL_URL+'/'+params.MODEL_FILE_NAME
+                                            echo env.MODEL_PATH_URL
+                                            env.IMAGE_PATH=env.REPO_NAME+'/'+env.STAGE_PROJECTID+'/seldon-generic-model:v1'
+                                            env.BUCKETNAME='kube_stage'
+                                         }else if(params.DEPLOY_ENV == 'Development'){
+                                              env.MODEL_PATH_URL=env.DEV_MODEL_URL+'/'+params.MODEL_FILE_NAME
+                                              env.DEV_MODEL_PATH_URL=env.MODEL_PATH_URL
+                                              echo env.MODEL_PATH_URL
+                                              env.IMAGE_PATH=env.REPO_NAME+'/'+env.DEV_PROJECTID+'/seldon-generic-model:v1'
+                                              env.BUCKETNAME = 'kube_dev'
+                                         }
+	    		                         
+                                        echo env.IMAGE_PATH
+                                                       
+                                        
+                                    
+
+                                     sh'''
+                                          
+                                          wget  $DEV_MODEL_PATH_URL
+                                          echo $MODEL_FILE_NAME
+                                          gsutil cp gs://${DEPLOY_SCRIPT_PATH}/GenericPredict.json.template .
+                                          cat "GenericPredict.json.template" | sed "s@IMAGE_PATH@${IMAGE_PATH}@g" | sed "s@MODEL_PATH_URL@$MODEL_PATH_URL@g" | sed "s@MODEL_TYPE@$MODEL_TYPE@g" | sed "s@MODEL_NAME@$MODEL_NAME@g" > GenericPredict.json
+                                          if [ "$DEPLOY_ENV" = "Development" ];then
+                                              
+                                              gsutil cp gs://${DEPLOY_SCRIPT_PATH}/devSeldonCfg .
+                                            
+                                              ../seldondeployment/kubernetes/client/bin/kubectl  --kubeconfig=devSeldonCfg | pygmentize GenericPredict.json
+                                              ../seldondeployment/kubernetes/client/bin/kubectl --kubeconfig=devSeldonCfg create -f GenericPredict.json
+                                          elif [ "$DEPLOY_ENV" = "Staging" ];then
+                                              
+                                              gsutil cp $MODEL_FILE_NAME gs://${BUCKETNAME}/${GCS_PATH}/   
+                                              gsutil cp gs://${DEPLOY_SCRIPT_PATH}/sconfig .
+                                              
+                                              ../seldondeployment/kubernetes/client/bin/kubectl  --kubeconfig=sconfig | pygmentize GenericPredict.json
+                                              ../seldondeployment/kubernetes/client/bin/kubectl --kubeconfig=sconfig create -f GenericPredict.json
+                                          else
+                                              echo "invalid Deployment Environment"
+                                          fi
+                                          
+                                          
+                                          
+                                          '''
+                                        }catch(err){
+                                             echo "$err"
+                                             returnObj='{"jobId":'+params.jobId+',errMessage":'+"$err"+',"stageName":"Seldon Deployment","status":"FAILURE"}'
+                                             throw err
+                                        }
+                                    }
+                                    
+                                          }
+                                       }
+    }
+     post {
+success {
+script {
+ returnObj='{"jobId":'+params.jobId+',"errMessage":"No Error" ,"stageName":"ALL","status":"SUCCESS"}'
+echo JsonOutput.toJson(returnObj)
+echo returnObj
+}
+}
+failure {
+script {
+echo JsonOutput.toJson(returnObj)
+echo returnObj
+
+}
+}
+}     
+    }
+                                          
+                
+
+
